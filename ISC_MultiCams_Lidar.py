@@ -29,6 +29,23 @@ CAM3_MASK = np.load('./ISC_mask/Camera3_mask.npy')
 CAM4_MASK = np.load('./ISC_mask/Camera4_mask.npy')
 CAM5_MASK = np.load('./ISC_mask/Camera5_mask.npy')
 
+name_to_bbox_size = {
+    'VRU_Adult_Using_Motorized_Bicycle': [0.96, 1.64, 1.65],
+    'Passenger_Vehicle': [2.60, 5.08, 1.85],
+    'VRU_Child': [0.68, 0.65, 1.08],
+    'VRU_Adult': [0.83, 0.75, 1.59],
+    'VRU_Adult_Using_Cane': [0.75, 0.69, 1.45],
+    'VRU_Adult_Using_Manual_Scooter': [1.13, 1.23, 1.76],
+    'VRU_Adult_Using_Crutches': [1.14, 1.09, 2.08],
+    'VRU_Adult_Using_Cardboard_Box': [1.11, 1.15, 1.68],
+    'VRU_Adult_Using_Walker': [0.99, 1.12, 1.58],
+    'VRU_Adult_Using_Manual_Wheelchair': [1.08, 1.20, 1.28],
+    'VRU_Adult_Using_Stroller': [0.97, 1.56, 1.68],
+    'VRU_Adult_Using_Skateboard': [1.31, 1.71, 1.40],
+    'VRU_Adult_Using_Manual_Bicycle': [0.89, 1.53, 1.38],
+    }
+    
+
     
 def test_clsuter_center(Run_num, sync_one_frame = False, selected_frame = None, sync_one_cam = False, selected_cam = None, sync_all = False):
     ''' Test the synchronization between the camera and LiDAR data. The function
@@ -49,8 +66,8 @@ def test_clsuter_center(Run_num, sync_one_frame = False, selected_frame = None, 
     inferencer = DetInferencer(method_config)
     dataset_dir = '../datasets/validation_data_full'
     run_folder_dir = f'{dataset_dir}/Run_{Run_num}'
-    fusion_dir = f'{run_folder_dir}/fusion_cluster' # save the fusion result to a folder
-    fusion_label_dir = f'{run_folder_dir}/masked_convention_fusion_label' # save the fusion result to a folder
+    fusion_dir = f'{run_folder_dir}/fusion_cluster' # save the fusion result to visulize some frames to a folder
+    fusion_label_dir = f'{run_folder_dir}/masked_fusion_label_coco' # save the fusion result to a folder, _coco not convert the label. just use coco label
     os.makedirs(fusion_dir, exist_ok=True)
     os.makedirs(fusion_label_dir, exist_ok=True)
 
@@ -65,6 +82,9 @@ def test_clsuter_center(Run_num, sync_one_frame = False, selected_frame = None, 
     syn_dict = {}
     for i in range(1, 9):
         csv_path = os.path.join(run_folder_dir, syn_csv_format.format(i))
+        if not os.path.exists(csv_path):
+            print(f'Error: {csv_path} does not exist')
+            continue
         # drop the nan value, in the  Lidar2_frame_idx column
         syn_time_framing = pd.read_csv(csv_path)
         # syn_time_framing['Lidar2_frame_idx'] = syn_time_framing['Lidar2_frame_idx'].astype(int)
@@ -112,6 +132,12 @@ def test_clsuter_center(Run_num, sync_one_frame = False, selected_frame = None, 
     refined_fused_result = {} # fused from conventional pipeline and the fused result
     
     conventional_df = load_conventional_pipeline_result(Run_num)
+    
+    # not sycned  with the cameras
+    for bin_idx in range(0, int(first_syn)):
+        conventional_result = get_one_bin_detection(conventional_df, f'{bin_idx:06d}.pcd')
+        convention_centers = conventional_result[['x', 'y', 'z', 'label','score','rotation']].values
+        refined_fused_result[bin_idx] = convention_centers
 
     for bin_idx in tqdm(syn_bins):
         print(f'-------Processing lidar frame {bin_idx}------')
@@ -235,9 +261,9 @@ def test_clsuter_center(Run_num, sync_one_frame = False, selected_frame = None, 
         print('voted camera proposal: \n', voted_camera_proposal)
         run_fused_result[bin_idx] = voted_camera_proposal
 
-        convention_fused_proposal = refine_conventional_pipeline_result(conventional_df, bin_idx, voted_camera_proposal)
-        refined_fused_result[bin_idx] = convention_fused_proposal
-        print('convention_fused_proposal: \n', convention_fused_proposal)
+        # convention_fused_proposal = refine_conventional_pipeline_result(conventional_df, bin_idx, voted_camera_proposal)
+        # refined_fused_result[bin_idx] = convention_fused_proposal
+        # print('convention_fused_proposal: \n', convention_fused_proposal)
 
 
         ## ========= code below is for result fusion ==========
@@ -247,28 +273,26 @@ def test_clsuter_center(Run_num, sync_one_frame = False, selected_frame = None, 
 
 if __name__ == '__main__':
     ### use mode 1: check for one frame in one Run ###
-    test_clsuter_center(Run_num=55, sync_one_frame = True, selected_frame = 31)
+    # test_clsuter_center(Run_num=55, sync_one_frame = True, selected_frame = 180)
    
 
     ### use mode 2: check for one camera in one Run ###
-    # test_clsuter(Run_num=410, sync_one_cam=True, selected_cam = 4)
+    # test_clsuter_center(Run_num=55, sync_one_cam=True, selected_cam = 5)
     
 
     ### use mode 3: check for all selected cameras in one Run ###
     # test_clsuter_center(Run_num=55, sync_all= True)
 
-
-
-    ### function to get the fused result for all the runs ###
-    # run_nums = [int(dir.split('_')[-1])for dir in os.listdir('../datasets/validation_data_full') if dir.startswith('Run_')]
-    # error_run_nums = [] 
-    # for run_num in tqdm(run_nums):
-    #     if run_num == 48:
-    #         continue
-    #     try:
-    #         test_clsuter_center(Run_num=run_num, sync_all= True)
-    #     except Exception as e:
-    #         error_run_nums.append(run_num)
-    #         print(f'Error: {e}')
-    #         continue
-    # print('Error run numbers', error_run_nums)
+    # use mode 4:function to get the fused result for all the runs ###
+    run_nums = [int(dir.split('_')[-1])for dir in os.listdir('../datasets/validation_data_full') if dir.startswith('Run_')]
+    error_run_nums = [] 
+    for run_num in tqdm(run_nums):
+        if run_num == 55:
+            continue
+        try:
+            test_clsuter_center(Run_num=run_num, sync_all= True)
+        except Exception as e:
+            error_run_nums.append(run_num)
+            print(f'Error: {e}')
+            continue
+    print('Error run numbers', error_run_nums)

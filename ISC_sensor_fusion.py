@@ -132,9 +132,9 @@ def get_cluster_centers_and_rotations(clusters, T_cam_velo):
         cluster_xyz = uvz2xyz(uvz= np.hstack((cluster[:,:3], np.ones((len(cluster),1)))), T_cam_velo= T_cam_velo)
         center_label = cluster[0, 3]
         center_score = cluster[0, 4]
-        if center_label in [2, 3, 7]:
-            # vehicle should have at least 4 points to calculate the convex hull
-            if len(cluster_xyz) > 10:
+        if center_label in [2, 5, 7]: # 2: car, 5: bus, 7: truck
+            # vehicle should have at least 10 points to calculate the convex hull
+            if len(cluster_xyz) > 20:
                 hull_vertice = ConvexHull(cluster_xyz, qhull_options='QJ').vertices
                 hull_pcd = cluster_xyz[hull_vertice]
                 rotation = get_cluster_rotation(hull_pcd)
@@ -266,6 +266,12 @@ def associate_cam_to_lidar(bboxes, labels, scores, velo_uvz, T_cam_velo):
     if len(scores.shape) == 0:
         scores = np.array([scores])
 
+    # sorted the bboxes by the scores
+    sorted_idx = np.argsort(scores)[::-1]
+    bboxes = bboxes[sorted_idx]
+    scores = scores[sorted_idx]
+    labels = labels[sorted_idx]
+    
     # for each bbox, get the points that are within the threshold distance
     clusters = [[]for _ in range(len(bboxes))]
     for i, bbox in enumerate(bboxes):
@@ -562,11 +568,12 @@ def write_out_fused_result(run_fused_result, fusion_label_dir, Run_num):
        bin_idx.pid, object_2,'''
     with open(f'{fusion_label_dir}/Run_{Run_num}_fused_result.txt', 'w') as f:
         for bin_idx, proposals in run_fused_result.items():
+            # when no proposals, skip
             if len(proposals) == 0:
                 continue
             for i, proposal in enumerate(proposals):
                 # bin_index label, x, y, z, score, rotation, rotation_ziyan
-                f.write(f'{bin_idx:06d}.pid, {CLUSTER_LABELS[proposal[3]]}, {proposal[0]}, {proposal[1]}, {proposal[2]}, {proposal[4]},{proposal[5]}\n')
+                f.write(f'{bin_idx:06d}.pid, {CLUSTER_LABELS[proposal[3]]}, {proposal[0]}, {proposal[1]}, {proposal[2]}, {proposal[4]}, {proposal[5]}\n')
     
 def suppress_closed_center(center, centers,threshold=0.2):
     '''Suppress the closed centers'''
@@ -580,23 +587,10 @@ def suppress_closed_center(center, centers,threshold=0.2):
     if np.any((distances < threshold) & (distances > 0)):
         return np.array([])
     return center
-
-def camera_proposal_decision(camera_proposal):
-    # some objects are detected by multiple cameras, we need to decide which one to use
-    proposals = []
-    for key, centers in camera_proposal.items():
-        # filter out the empty centers
-        valid_centers = [center for center in centers if len(center) > 0]
-        for cnt in valid_centers:
-            proposals.append(cnt)
-    if proposals:
-        proposals = np.array(proposals)
-    else:
-        proposals = np.array([])
-    print('raw proposals: \n', proposals)
-     # Initialize a list to keep the suppressed detections
-    
-    suppressed_detections = []
+def per_class_suppression(proposals, threshold=0.2):
+    '''Suppress the closed centers for each class'''
+    # proposals: Nx7 array
+    suppressed_detections  = []
     while proposals.shape[0] > 0:
         max_score_idx = np.argmax(proposals[:, 4])
         max_score_proposal = proposals[max_score_idx]
@@ -612,18 +606,37 @@ def camera_proposal_decision(camera_proposal):
         for detection in proposals:
             distance = np.linalg.norm(detection[:3] - max_score_proposal[:3])
             if distance >= 0.3:
-                proposals_to_keep.append(detection)
-        
+                proposals_to_keep.append(detection)   
          # Convert the proposals to keep back to a numpy array
         proposals = np.array(proposals_to_keep)
+    return suppressed_detections
+
+def camera_proposal_decision(camera_proposal):
+    # some objects are detected by multiple cameras, we need to decide which one to use
+    proposals = []
+    for key, centers in camera_proposal.items():
+        # filter out the empty centers
+        valid_centers = [center for center in centers if len(center) > 0]
+        for cnt in valid_centers:
+            proposals.append(cnt)
+    if proposals:
+        proposals = np.array(proposals)
+    else:
+        proposals = np.array([]).reshape(-1, 6)
+    print('raw proposals: \n', proposals)
+     # Initialize a list to keep the suppressed detections
     
-    # convert label 0, 1, 3 to '1' -- indicating the person
+    suppressed_detections = []
+    # get the unique labels
+    if len(proposals):
+        unique_labels = np.unique(proposals[:, 3])
+        for label in unique_labels:
+            class_proposals = proposals[proposals[:, 3] == label]
+            suppresed_class_proposals = per_class_suppression(class_proposals)
+            if len(suppresed_class_proposals) > 0:
+                suppressed_detections.extend(suppresed_class_proposals)
+        # convert label 0, 1, 3 to '1' -- indicating the person
     suppressed_detections = np.array(suppressed_detections)
-    for i in range(len(suppressed_detections)):
-        if suppressed_detections[i, 3] in [0, 1, 3]:
-            suppressed_detections[i, 3] = 0 # person
-        else:
-            suppressed_detections[i, 3] = 2 # vehicle
     return np.array(suppressed_detections).reshape(-1, 6) # 2d array
 
 #================================================ 
@@ -643,6 +656,7 @@ ISC_NAME_TO_CLASS = {
     'VRU_Adult_Using_Skateboard': 11,
     'VRU_Adult_Using_Manual_Bicycle': 12,
     }
+
 def load_conventional_pipeline_result(Run_num):
       #labels
     file_format = f'../Intersection-Safety-Challenge/conventional_pipeline/sample_detections_validation/Run_{Run_num}_detections_oriented_lidar2.txt'
@@ -676,6 +690,7 @@ def refine_conventional_pipeline_result(df,  bin_index, voted_camera_proposal):
     conventaion_vrus_centers = convention_vrus[['x', 'y', 'z', 'label','score','rotation']].values
     
     # set the voted_vehicles to the refined vehicles, because camera is more accurate than conventional LiDAR
+    # but if the background filter is not good, the camera may detect some false positive
     if len(voted_cam_vehicles) > 0:
         refined_results.append(voted_cam_vehicles)
     else:
