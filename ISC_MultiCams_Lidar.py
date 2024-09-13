@@ -273,7 +273,7 @@ def test_clsuter_center(Run_num, sync_one_frame = False, selected_frame = None, 
 
 if __name__ == '__main__':
     ### use mode 1: check for one frame in one Run ###
-    # test_clsuter_center(Run_num=55, sync_one_frame = True, selected_frame = 180)
+    test_clsuter_center(Run_num=48, sync_one_frame = True, selected_frame = 343)
    
 
     ### use mode 2: check for one camera in one Run ###
@@ -284,15 +284,15 @@ if __name__ == '__main__':
     # test_clsuter_center(Run_num=55, sync_all= True)
 
     # use mode 4:function to get the fused result for all the runs ###
-    run_nums = [int(dir.split('_')[-1])for dir in os.listdir('../datasets/validation_data_full') if dir.startswith('Run_')]
-    error_run_nums = [] 
-    for run_num in tqdm(run_nums):
-        if run_num == 55:
-            continue
-        try:
-            test_clsuter_center(Run_num=run_num, sync_all= True)
-        except Exception as e:
-            error_run_nums.append(run_num)
-            print(f'Error: {e}')
-            continue
-    print('Error run numbers', error_run_nums)
+    # run_nums = [int(dir.split('_')[-1])for dir in os.listdir('../datasets/validation_data_full') if dir.startswith('Run_')]
+    # error_run_nums = [] 
+    # for run_num in tqdm(run_nums):
+    #     if run_num == 55:
+    #         continue
+    #     try:
+    #         test_clsuter_center(Run_num=run_num, sync_all= True)
+    #     except Exception as e:
+    #         error_run_nums.append(run_num)
+    #         print(f'Error: {e}')
+    #         continue
+    # print('Error run numbers', error_run_nums)
