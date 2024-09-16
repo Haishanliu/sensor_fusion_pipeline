@@ -15,6 +15,22 @@ import csv
 from datetime import datetime
 import pytz
 
+def replace_subclass(subclass_original):
+    # Mapping from groundtruth subclass labels to expected subclass labels
+    if subclass_original == 'VRU_Adult_Using_Manual_Wheelchair' or subclass_original == 'VRU_Adult_Using_Motorized_Wheelchair':
+        subclass_final = 'VRU_Adult_Using_Wheelchair'
+    elif subclass_original == 'VRU_Adult_Using_Manual_Bicycle' or subclass_original == 'VRU_Adult_Using_Motorized_Bicycle':
+        subclass_final = 'VRU_Adult_Using_Bicycle'
+    elif subclass_original == 'VRU_Adult_Using_Cane' or subclass_original == 'VRU_Adult_Using_Stroller' or subclass_original == 'VRU_Adult_Using_Walker' or subclass_original == 'VRU_Adult_Using_Crutches' or subclass_original == 'VRU_Adult_Using_Cardboard_Box' or subclass_original == 'VRU_Adult_Using_Umbrella':
+        subclass_final = 'VRU_Adult_Using_Non-Motorized_Device/Prop_Other'
+    elif subclass_original == 'VRU_Adult_Using_Electric_Scooter' or subclass_original == 'VRU_Adult_Using_Manual_Scooter' or subclass_original == 'VRU_Adult_Using_Skateboard':
+        subclass_final = 'VRU_Adult_Using_Scooter_or_Skateboard'
+    else:
+        subclass_final = subclass_original
+    
+    return subclass_final
+
+
 def cal_timestamp(loc):
     # Open and read the CSV file
     with open(loc, mode='r', newline='') as file:
@@ -45,7 +61,39 @@ def cal_timestamp(loc):
 
     return timestamp
 
-def find_subclass(timestamp_start, loc2d, loc3d, search_period, search_radius, name_to_bbox_size, for_tracking=False):
+def calcualte_near_objects(centers_2d, centers_3d, index_2d, indices_3d, search_radius):    
+    # print(indices_3d)
+    points = centers_3d[indices_3d]
+    reference_point = centers_2d[index_2d]
+    # calculate euc dis
+    distances = np.linalg.norm(points - reference_point, axis=1)
+    # filter the centers within range
+    within_range_indices_3d = indices_3d[distances < search_radius]
+
+    return within_range_indices_3d
+
+def filter_redundencies(indices_2d, centers_2d, classes_2d):
+    indices_2d_updated = indices_2d
+    for j in indices_2d:
+        for jj in indices_2d:
+            if jj == j:
+                continue
+            elif np.linalg.norm(centers_2d[j] - centers_2d[jj]) < 0.1:
+                if classes_2d[j] == 'bicycle' and classes_2d[jj] == 'person':
+                    indices_2d_updated = np.delete(indices_2d_updated, np.where(indices_2d_updated == jj)[0])
+                elif classes_2d[j] == 'car' and classes_2d[jj] == 'truck':
+                    indices_2d_updated = np.delete(indices_2d_updated, np.where(indices_2d_updated == jj)[0])
+                elif classes_2d[j] == 'car' and classes_2d[jj] == 'car':
+                    indices_2d_updated = np.delete(indices_2d_updated, np.where(indices_2d_updated == jj)[0])
+                # hs modify here
+                elif classes_2d[j] == 'person' and classes_2d[jj] == 'person':
+                    indices_2d_updated = np.delete(indices_2d_updated, np.where(indices_2d_updated == jj)[0])
+                # hs modify here
+                elif classes_2d[j] == 'person' and classes_2d[jj] == 'motorcycle':
+                    indices_2d_updated = np.delete(indices_2d_updated, np.where(indices_2d_updated == jj)[0])
+    return indices_2d_updated
+
+def find_subclass(timestamp_start, loc2d, loc3d, search_period, search_radius, name_to_bbox_size, for_tracking=False, for_eval=False):
     content_value_2d = np.genfromtxt(loc2d, delimiter=',', usecols=range(2,7))  # modify here
     content_str_2d = np.genfromtxt(loc2d, delimiter=',', dtype='|U', usecols=range(0,2))
     frames_2d = content_str_2d[:,0]
@@ -79,11 +127,14 @@ def find_subclass(timestamp_start, loc2d, loc3d, search_period, search_radius, n
             frame = str(i).zfill(6)
             indices_2d = np.where(frames_2d == frame)[0]
             indices_3d = np.where(frames_3d == frame)[0]
-        for j in indices_2d:
+          # filter the redundencies
+        indices_2d_updated = filter_redundencies(indices_2d, centers_2d, classes_2d)
+        # find subclass in 3d
+        for j in indices_2d_updated:
             # print(classes_2d[j])
-            if classes_2d[j] == 'car' or classes_2d[j] == 'truck':
-                subclass = 'Passenger_Vehicle'
-            elif classes_2d[j] == 'bicycle':
+            # if classes_2d[j] == 'car' or classes_2d[j] == 'truck':
+            #     subclass = 'Passenger_Vehicle'
+            if classes_2d[j] == 'bicycle':
                 subclass = 'VRU_Adult_Using_Manual_Bicycle'
             else:
                 within_range_indices_3d = calcualte_near_objects(centers_2d, centers_3d, j, indices_3d, search_radius)
@@ -96,7 +147,8 @@ def find_subclass(timestamp_start, loc2d, loc3d, search_period, search_radius, n
                     frequency = series.value_counts()
                     # print(frequency)
                     tmp = 0
-                    while frequency.index[tmp] == 'VRU_Adult_Using_Manual_Bicycle' or frequency.index[tmp] == 'Passenger_Vehicle':
+                    # HS: 删掉 passanger vehicle
+                    while frequency.index[tmp] == 'VRU_Adult_Using_Manual_Bicycle':
                         tmp += 1
                     subclass = frequency.index[tmp]
                 else:
@@ -121,25 +173,19 @@ def find_subclass(timestamp_start, loc2d, loc3d, search_period, search_radius, n
             size = name_to_bbox_size[subclass]
             center = centers_2d[j]
             timestamp = float(timestamp_start) + float(frames_2d[j])*0.1
+            subclass_final = replace_subclass(subclass)
             if for_tracking:
-                detection = [timestamp, subclass, center[0], size[0], center[1], size[1], center[2], size[2], raws[j], frames_2d[j]]
+                detection = [timestamp, subclass_final, center[0], size[0], center[1], size[1], center[2], size[2], raws[j], frames_2d[j]]
+            elif for_eval:
+                
+                # be consistent with the GT format, bin_index, label, x, y, z, length, width, height, confidence score
+                detection = [str(frames_2d[j]).zfill(6)+'.pcd', subclass_final, center[0], size[0], center[1], size[1], center[2], size[2], raws[j], confidence_scores[j]]
             else:
-                detection = [timestamp, subclass, center[0], size[0], center[1], size[1], center[2], size[2], raws[j]]
+                detection = [timestamp, subclass_final, center[0], size[0], center[1], size[1], center[2], size[2], raws[j]]
             detections.append(detection)
     return detections
 
-def calcualte_near_objects(centers_2d, centers_3d, index_2d, indices_3d, search_radius):    
-    # print(indices_3d)
-    points = centers_3d[indices_3d]
-    reference_point = centers_2d[index_2d]
-    # calculate euc dis
-    distances = np.linalg.norm(points - reference_point, axis=1)
-    # filter the centers within range
-    within_range_indices_3d = indices_3d[distances < search_radius]
-
-    return within_range_indices_3d
-
-def main(for_tracking=False):
+def main(for_tracking=False, for_eval=False):
 
     name_to_bbox_size = {
         'VRU_Adult_Using_Motorized_Bicycle': [0.96, 1.64, 1.65],
@@ -168,7 +214,7 @@ def main(for_tracking=False):
     # Get a list of all items in the directory
     # loc = './sample_detections_validation/' #replace it to your own folder
     dataset_dir = '../datasets/validation_data_full'
-    res2d_dir = './camera_fused_label/fused_label_lidar12_cam24/masked_fusion_label_coco'
+    res2d_dir = './camera_fused_label/fused_label_lidar12_cam24/masked_fusion_label_coco_v2'
 
     res3d_dir = '../Intersection-Safety-Challenge/conventional_pipeline/sample_detections_validation'
     run_res_2d_format = f'{res2d_dir}/Run_{{}}_fused_result.txt'
@@ -177,11 +223,14 @@ def main(for_tracking=False):
 
     if for_tracking:
         output_res_format = f'{res2d_dir}/Run_{{}}_detections_fusion_lidar12_camera_search-based_tracking.csv'
+    elif for_eval:
+        output_res_format = f'{res2d_dir}/Run_{{}}_detections_fusion_lidar12_camera_search-based_eval.csv'
     else:
         output_res_format = f'{res2d_dir}/Run_{{}}_detections_fusion_lidar12_camera_search-based.csv'
     
     Run_nums = sorted([int(dir.split('_')[-1])for dir in os.listdir('../datasets/validation_data_full') if dir.startswith('Run_')])
     # Run_nums = [55]
+    error_runs = []
     for run_num in Run_nums:
         #input
         print(f'Processing Run_{run_num}')
@@ -189,6 +238,7 @@ def main(for_tracking=False):
         
         if not os.path.exists(run_res_2d_file):
             print(f'{run_res_2d_file} does not exist')
+            error_runs.append(run_num)
             continue
         run_res_3d_file = run_res_3d_format.format(run_num)
 
@@ -203,20 +253,22 @@ def main(for_tracking=False):
         header = ['Timestamps', 'subclass', 'x_center', 'x_length', 'y_center', 'y_length', 'z_center', 'z_length', 'z_rotation']
         if for_tracking:
             header.append('bin_idx')
+        elif for_eval:
+            header = ['bin_idx', 'subclass', 'x_center', 'x_length', 'y_center', 'y_length', 'z_center', 'z_length', 'z_rotation', 'confidence_score']
         # need the bin_inx for tracking
-        detections = find_subclass(timestamp_start, run_res_2d_file, run_res_3d_file, search_period, search_radius, name_to_bbox_size, for_tracking)
+        detections = find_subclass(timestamp_start, run_res_2d_file, run_res_3d_file, search_period, search_radius, name_to_bbox_size, for_tracking, for_eval)
         # save as CSV
         with open(output_file_name, mode='w', newline='') as file:
             writer = csv.writer(file)
             writer.writerow(header)
             writer.writerows(detections)
-        # save as txt
-        # with open(file_name, "w", encoding="utf-8") as file:
-        #     for item in detections:
-        #         file.write(', '.join(map(str, item)) + '\n')
-        # print(detections)
-    
+        print(f'Run_{run_num} is saved successfully')
+    print('Error runs:', error_runs)
+    print('Total runs:', len(Run_nums))
+     
 
 
 if __name__ == "__main__":
-    main(for_tracking=False)
+    # main(for_tracking=True)
+    main(for_eval = True) # set for_eval to True to generate the evaluation file
+    # main() # if nothing is set, this one is for ISC submission

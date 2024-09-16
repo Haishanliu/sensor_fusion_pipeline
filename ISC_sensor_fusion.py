@@ -21,7 +21,7 @@ import os
 
 CLUSTER_LABELS = {i: object for i, object in enumerate(mmdet.evaluation.functional.coco_classes())}
 # 0: 'person', 1: 'bicycle', 2: 'car', 3: 'motorcycle', 4: 'airplane', 5: 'bus', 6: 'train', 7: 'truck', 8: 'boat'
-TAGRETS_LABELS = set([0, 1, 2, 3, 5, 7])
+TAGRET_LABELS = set([0, 1, 2, 3, 5, 7])
 
 
 def get_fused_detection(image, bin_path, model, T_velo_cam, T_cam_velo,K , D, draw_boxes=True, draw_depth=True):
@@ -52,6 +52,30 @@ def get_fused_detection(image, bin_path, model, T_velo_cam, T_cam_velo,K , D, dr
         # fileter out the labels that are not interested
         mask = (scores >= 0.3) & (labels != 9) & (labels != 4)
         labels, scores, bboxes = labels[mask], scores[mask], bboxes[mask]
+        
+        # only keep the interested labels
+        mask2 = np.isin(labels, list(TAGRET_LABELS))
+        labels, scores, bboxes = labels[mask2], scores[mask2], bboxes[mask2]
+
+        # set confidence threshold for car to be >= 0.5, for person to be >= 0.3
+         # Define class-wise confidence thresholds
+        class_thresholds = {
+            0: 0.3,  # person
+            1: 0.3,  # bicycle
+            2: 0.5,  # car
+            3: 0.3,  # motorcycle
+            5: 0.5,  # bus
+            7: 0.5,  # truck
+            # Add other class labels and their thresholds as needed
+        }
+        
+        # Create an array of thresholds corresponding to each detection
+        thresholds = np.array([class_thresholds[label] for label in labels])
+
+        # Create a mask where each detection meets its class-specific threshold
+        mask3 = scores >= thresholds
+        labels, scores, bboxes = labels[mask3], scores[mask3], bboxes[mask3]
+
 
     
     # step 1: undistort the image
@@ -72,7 +96,7 @@ def get_fused_detection(image, bin_path, model, T_velo_cam, T_cam_velo,K , D, dr
             text_position = (pt1[0], pt1[1] - 10)
         
             # Add the bounding box number (index) to the image
-            cv2.putText(image, f'#{i}', text_position, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2, cv2.LINE_AA)  # Red text
+            cv2.putText(image, f'#{i}-{CLUSTER_LABELS[labels[i]]}-{scores[i]:.2f}', text_position, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2, cv2.LINE_AA)  # Red text
 # # get uvz centers for detected objects
     # bboxes = get_uvz_centers(image, 
     #                          velo_uvz, 
@@ -80,6 +104,92 @@ def get_fused_detection(image, bin_path, model, T_velo_cam, T_cam_velo,K , D, dr
     #                          draw=draw_depth)
     
     return bboxes, labels, scores, clusters, centers, velo_uvz
+
+def get_fused_detection_multi_methods(cap, image_num, bin_path, model, T_velo_cam, T_cam_velo,K , D, draw_boxes=True, draw_depth=True):
+    ''' This is the interface from Chuheng's new results. But I will explore later. 
+
+
+        Obtains the detections from the camera and associates them with LiDAR points.
+       Get the lidar points that are within the bounding box of the detected objects.
+       then calculate the center of the points that are within the bounding box.
+        Inputs:
+            cap - video capture object
+            image_num - this is the frame number of the image
+            bin_path - path to LiDAR bin file
+            T_velo_cam - transformation from LiDAR to camera## (u,v,z) space
+            model - detection model (this functions assumes a yolo5 model)
+                  - any detector can be used as long as it has the following attributes:
+                    show, xyxy
+        Output:
+            bboxes - array of detected bounding boxes
+            labels - detected classes
+            scores - confidence scores
+            velo_uv - LiDAR points porjected to camera uvz coordinate frame
+            centers - centers of the detected objects in LiDAR xyz coordinates
+        '''
+    ## 1. compute detections in the left image
+    detections = model(image, pred_score_thr=0.1, show=False, no_save_pred=True, return_vis=False)
+    for i, result in enumerate(detections['predictions']):
+        labels = np.array(result['labels'])
+        scores = np.array(result['scores'])
+        bboxes = np.array(result['bboxes']).astype(int) # min_x, min_y, max_x, max_y
+
+        # fileter out the labels that are not interested
+        mask = (scores >= 0.3) & (labels != 9) & (labels != 4)
+        labels, scores, bboxes = labels[mask], scores[mask], bboxes[mask]
+        
+        # only keep the interested labels
+        mask2 = np.isin(labels, list(TAGRET_LABELS))
+        labels, scores, bboxes = labels[mask2], scores[mask2], bboxes[mask2]
+
+        # set confidence threshold for car to be >= 0.5, for person to be >= 0.3
+         # Define class-wise confidence thresholds
+        class_thresholds = {
+            0: 0.3,  # person
+            1: 0.3,  # bicycle
+            2: 0.5,  # car
+            3: 0.3,  # motorcycle
+            5: 0.5,  # bus
+            7: 0.5,  # truck
+            # Add other class labels and their thresholds as needed
+        }
+        
+        # Create an array of thresholds corresponding to each detection
+        thresholds = np.array([class_thresholds[label] for label in labels])
+
+        # Create a mask where each detection meets its class-specific threshold
+        mask3 = scores >= thresholds
+        labels, scores, bboxes = labels[mask3], scores[mask3], bboxes[mask3]
+
+
+    
+    # step 1: undistort the image
+    undistorted_image = cv2.undistort(image, K, D)
+    # step 2: project velo --> point_uvz, mainly use this function for syncronization verification
+    velo_uvz = project_velobin2uvz(bin_path, T_velo_cam, undistorted_image, remove_plane=False)
+
+
+    # step 3: get the point_uvz centers for the detected objects
+    bboxes, scores, labels, clusters, centers = associate_cam_to_lidar(bboxes= bboxes, labels= labels, scores= scores, velo_uvz=velo_uvz, T_cam_velo= T_cam_velo)
+
+    # draw boxes on image
+    if draw_boxes:
+        for i, bbox in enumerate(bboxes):
+            pt1 = (bbox[0], bbox[1])
+            pt2 = (bbox[2], bbox[3])
+            cv2.rectangle(image, pt1, pt2, (0, 255, 0))
+            text_position = (pt1[0], pt1[1] - 10)
+        
+            # Add the bounding box number (index) to the image
+            cv2.putText(image, f'#{i}-{CLUSTER_LABELS[labels[i]]}-{scores[i]:.2f}', text_position, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2, cv2.LINE_AA)  # Red text
+# # get uvz centers for detected objects
+    # bboxes = get_uvz_centers(image, 
+    #                          velo_uvz, 
+    #                          bboxes, 
+    #                          draw=draw_depth)
+    
+    return bboxes, labels, scores, clusters, centers, velo_uvz
+
 
 # ============================================================================================
 # pipeline functions 
@@ -107,7 +217,7 @@ def project_velobin2uvz(bin_path, T_velo_cam, image, remove_plane=True):
 # pipeline functions 
 
 def get_cluster_centers_and_rotations(clusters, T_cam_velo):
-    ''''clusters is a list of np.array from the associate_cam_to_lidar function
+    ''''clusters is a list of np.array from the associate_cam_to_lidar function, in uvz coordinates
     each array is the points that are associated with one bbox. 
     clusters[i][:3], i.e. the first three columns are the uvz coordinates of the points
     clusters[i][3] is the label of the bbox & clusters[i]
@@ -146,7 +256,7 @@ def get_cluster_centers_and_rotations(clusters, T_cam_velo):
                 print(f'\t {len(cluster_xyz)} points associated with bbox {i}')
                 continue
         else:
-            if len(cluster_xyz) > 4:
+            if len(cluster_xyz) >= 4:
                 hull_vertice = ConvexHull(cluster_xyz, qhull_options='QJ').vertices
                 hull_pcd = cluster_xyz[hull_vertice]
                 rotation = get_cluster_rotation(hull_pcd)
@@ -156,7 +266,7 @@ def get_cluster_centers_and_rotations(clusters, T_cam_velo):
                 # get the rotation of the convex hull
                 print(f'\t {len(cluster_xyz)} points associated with bbox {i}')
         
-            elif len(cluster_xyz) == 3 or len(cluster_xyz) == 4:
+            elif len(cluster_xyz) == 3:
                 rotation = get_cluster_rotation(cluster_xyz)
                 # rotation_ziyan = compute_principal_directions(cluster_xyz)
                 center = np.mean(cluster_xyz, axis=0)
@@ -187,20 +297,31 @@ def get_cluster_rotation(cluster):
     pca = PCA(n_components=2)
     pca.fit(xy_points)
     principal_axis = pca.components_[0]
-    rotation = np.arctan2(principal_axis[1], principal_axis[0])
-    rotation_deg = np.degrees(rotation)
-    if rotation_deg < 0:
-        rotation_deg += 2 * math.pi
-    return rotation_deg
+    raw = np.arctan2(principal_axis[1], principal_axis[0]) -np.pi/2
+    raw = limit_period(raw, 0, np.pi*2)
+    # in radians
+    return raw
 
 # ============================================================================================
 # pipeline functions ziyan's function to calculate the rotation
-def limit_period(val,
-                 offset: float = 0.5,
-                 period: float = np.pi):
-    """Limit the value into a period for periodic function."""
 
+def limit_period(val,
+                 offset: float = 0,
+                 period: float = 2*np.pi):
+    """Limit the value into a period for periodic function.
+
+    Args:
+        val (np.ndarray or Tensor): The value to be converted.
+        offset (float): Offset to set the value range. Defaults to 0.5.
+        period (float): Period of the value. Defaults to np.pi.
+
+    Returns:
+        np.ndarray or Tensor: Value in the range of
+        [-offset * period, (1-offset) * period].
+    """
+    
     limited_val = val - np.floor(val / period + offset) * period
+    limited_val = math.degrees(limited_val)
     return limited_val
 
 def compute_principal_directions(points):
@@ -255,19 +376,37 @@ def associate_cam_to_lidar(bboxes, labels, scores, velo_uvz, T_cam_velo):
 
     points_2d = velo_uvz[:, :2]
     threshold_distance = 30
-  
-    # first conduct nms to reduce the redundant detection
-    reduced_bboxes, reduced_scores, reduced_labels = reduce_redundant_detection(bboxes, scores, labels, threshold=0.2)
-    bboxes, scores, lables = reduced_bboxes, reduced_scores, reduced_labels
-    # if bboxes is 1D array, convert it to 2D array
-    if len(bboxes.shape) == 1:
-        bboxes = bboxes.reshape(1, -1)
-    # if score is scalar, convert it to 1D array
-    if len(scores.shape) == 0:
-        scores = np.array([scores])
+    # set confidence threshold for car to be >= 0.5, for person to be >= 0.3
 
-    # sorted the bboxes by the scores
-    sorted_idx = np.argsort(scores)[::-1]
+    # First conduct NMS to reduce redundant detections
+    reduced_bboxes, reduced_scores, reduced_labels = reduce_redundant_detection(bboxes, scores, labels, threshold=0.2)
+    bboxes, scores, labels = reduced_bboxes, reduced_scores, reduced_labels
+
+    # Ensure bboxes is a 2D array
+    bboxes = np.array(bboxes)
+    if bboxes.ndim == 1:
+        bboxes = bboxes.reshape(1, -1)
+
+    # Ensure scores and labels are 1D arrays
+    scores = np.array(scores).flatten()
+    labels = np.array(labels).flatten()
+
+    # Handle scalar scores and labels
+    if np.isscalar(scores):
+        scores = np.array([scores])
+    if np.isscalar(labels):
+        labels = np.array([labels])
+
+    # Ensure arrays have the same length
+    assert scores.shape[0] == labels.shape[0] == bboxes.shape[0], "Arrays must have the same length."
+
+    # Sort by labels ascending and scores descending
+    sorted_idx = np.lexsort((-scores, labels))
+
+    print('sorted_idx', sorted_idx)
+    print('scores', scores)
+
+    # Apply sorted indices
     bboxes = bboxes[sorted_idx]
     scores = scores[sorted_idx]
     labels = labels[sorted_idx]
@@ -288,7 +427,7 @@ def associate_cam_to_lidar(bboxes, labels, scores, velo_uvz, T_cam_velo):
         # print(f'inside_or_near: {inside_or_near}')
         points_inside = velo_uvz[inside_or_near] # Nx3 array of points that are within the bbox
         
-        
+        # with the sorted bbox, we can remove the points that are within the bbox, this is to avoid the same points are assigned to multiple bboxes
         # withtout replacement, remove the points that are within the bbox
         # remove the points_inside from the velo_uvz
         velo_uvz = np.delete(velo_uvz, inside_or_near, axis=0)
@@ -301,10 +440,11 @@ def associate_cam_to_lidar(bboxes, labels, scores, velo_uvz, T_cam_velo):
         # clusters[i].extend(velo_uvz[inside_or_near])
         '''point_inside: Nx5 array of points that are within the bbox, [x, y, z, lable, score]the last column is the label'''
         clusters[i].extend(points_inside)
+    # velo_uvz may have some points that are not associated with any bbox:
+    # reason: the points are too far away from the bbox
+    # reason: false negative from the detr detection model, need to relied on the histroy information
     
     # 每一行是一个bbox对应的lidar点
-    # delete the empty clusters
-    # clusters = [cluster for cluster in clusters if len(cluster) > 0]
     clusters = [np.array(cluster) for cluster in clusters]
     centers = get_cluster_centers_and_rotations(clusters, T_cam_velo)
     
@@ -587,6 +727,7 @@ def suppress_closed_center(center, centers,threshold=0.2):
     if np.any((distances < threshold) & (distances > 0)):
         return np.array([])
     return center
+
 def per_class_suppression(proposals, threshold=0.2):
     '''Suppress the closed centers for each class'''
     # proposals: Nx7 array

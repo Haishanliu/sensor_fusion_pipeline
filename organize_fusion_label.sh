@@ -15,7 +15,7 @@ for run_folder in "$base_dir"/Run_*; do
     # Extract the run number from the folder name
     run_number=$(basename "$run_folder")
     
-    origin_fusion_label_dir="$run_folder/masked_fusion_label_coco"
+    origin_fusion_label_dir="$run_folder/masked_fusion_label_coco_v2"
 
     # Check if the fusion_label directory exists in the current run folder
     if [ -d "$origin_fusion_label_dir" ]; then

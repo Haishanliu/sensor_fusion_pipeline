@@ -226,7 +226,7 @@ def test_do_coco_style_eval(gt_annos, dt_annos):
 def main():
     # gt path and detection path
     gt_loc = '../datasets/validation_data_full/kitti_GT_2/Run_48/Run_48_GT.txt'
-    dt_loc = '../datasets/validation_data_full/fused_convention_label_lidar12_cam24_full/Run_48/masked_convention_fusion_label/Run_48_fused_result.txt'
+    dt_loc = '../camera_fused_label/fused_label_lidar12_cam24/masked_fusion_label_coco/Run_48_fused_result.txt'
     # TBD: extract gt_annos and dt_annos, then run the evaluation pipeline
     # print(dt_anno)
     # rst = test_do_eval([gt_anno], [dt_anno])

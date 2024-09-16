@@ -21,9 +21,16 @@ class KittiLabel:
         return f'{self.label} {self.truncated} {self.occluded} {self.alpha} {self.bbox[0]} {self.bbox[1]} {self.bbox[2]} {self.bbox[3]} {self.dimensions[0]} {self.dimensions[1]} {self.dimensions[2]} {self.location[0]} {self.location[1]} {self.location[2]} {self.rotation_y}'
 
 def detr_for_tracking(run_fused_file, run_sync_file, tracking_dir):
+    try:
+        assert os.path.exists(run_fused_file)
+    except AssertionError:
+        print(f'File {run_fused_file} not found')
+        return
+    
     fused_result = pd.read_csv(run_fused_file)
     cam4_sync = pd.read_csv(run_sync_file)
     unique_frames = fused_result['bin_idx'].unique()
+  
     for frame in unique_frames:
         frame_fused_result = fused_result[fused_result['bin_idx'] == frame] 
         try:
@@ -51,10 +58,13 @@ def detr_for_tracking(run_fused_file, run_sync_file, tracking_dir):
         
 def main():
     dataset_dir = '../datasets/validation_data_full'
-    fused_result_dir = './camera_fused_label/fused_label_lidar12_cam24/masked_fusion_label_coco'
+    fused_result_dir = './camera_fused_label/fused_label_lidar12_cam24/masked_fusion_label_coco_v2'
     run_fused_file_format = f'{fused_result_dir}/Run_{{}}_detections_fusion_lidar12_camera_search-based_tracking.csv'
     cam4_sync_file_format = f'{dataset_dir}/Run_{{}}/VisualCamera4_Run_{{}}_frame-timing_sync.csv'
-    tracking_dir_format = f'./fusion_for_tracking/Run_{{}}'
+
+    tracking_dir = f'./tracking/fusion_for_tracking_v2'
+    # if need to change the saving directory, change the tracking_dir_format
+    tracking_dir_format = f'{tracking_dir}/Run_{{}}'
     
     Run_nums = sorted([int(dir.split('_')[-1])for dir in os.listdir('../datasets/validation_data_full') if dir.startswith('Run_')])
     # Run_nums = [48]

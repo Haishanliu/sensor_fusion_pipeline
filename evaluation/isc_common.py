@@ -38,8 +38,8 @@ def get_label_annos(Run_num):
     # dataset_dir = '/home/haishan/Projects/Intersection_safety/Intersection_Safety_Challenge/datasets/validation_data_full'
     gt_label_format = f'./kitti_GT_2/Run_{Run_num}/Run_{Run_num}_GT.txt'
 
-    dt_dir = '../camera_fused_label/fused_label_lidar12_cam24/masked_fusion_label_coco'
-    dt_label_format = f'{dt_dir}/Run_{Run_num}_detections_fusion_lidar12_camera_search-based.csv'
+    dt_dir = '../camera_fused_label/fused_label_lidar12_cam24/masked_fusion_label_coco_v2'
+    dt_label_format = f'{dt_dir}/Run_{Run_num}_detections_fusion_lidar12_camera_search-based_eval.csv'
 
     # need to assert gt_df.shape[0] == dt_df.shape[0]
     
@@ -48,11 +48,10 @@ def get_label_annos(Run_num):
     dt_df = pd.read_csv(dt_label_format, header=None, sep=',')
     # add the header to the dataframe
    
-    gt_df.columns = ['frame', 'label', 'x_ctr', 'x_len', 'y_ctr', 'y_len', 'z_ctr', 'z_len', 'z_rot'] # gt has no score
+    gt_df.columns = ['bin_indx', 'label', 'x_ctr', 'x_len', 'y_ctr', 'y_len', 'z_ctr', 'z_len', 'z_rot'] # gt has no score
     
-    dt_df.columns = ['frame', 'label', 'x_ctr', 'x_len', 'y_ctr', 'y_len', 'z_ctr', 'z_len', 'z_rot', 'score']
-        # df.columns = ['frame', 'label', 'x_ctr', 'x_len', 'y_ctr', 'y_len', 'z_ctr', 'z_len', 'z_rot']
-    dt_df['score'] = 0.7  # fake score, need to be modified
+    dt_df.columns = ['bin_indx', 'label', 'x_ctr', 'x_len', 'y_ctr', 'y_len', 'z_ctr', 'z_len', 'z_rot', 'score']
+
     # print(df.head(5))
     
     # for each frame, 

@@ -1,0 +1,3 @@
+deformable-detr-refine_r50_16xb2-50e_coco
+dab-detr_r50_8xb2-50e_coco
+conditional-detr_r50_8xb2-50e_coco
