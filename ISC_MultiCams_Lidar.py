@@ -72,8 +72,8 @@ def test_clsuter_center(Run_num, sync_one_frame = False, selected_frame = None, 
     run_folder_dir = f'{dataset_dir}/Run_{Run_num}'
     
     # saving dir
-    fusion_dir = f'{run_folder_dir}/fusion_cluster_v2' # save the fusion result to visulize some frames to a folder
-    fusion_label_dir = f'{run_folder_dir}/masked_fusion_label_coco_v2' # save the fusion result to a folder, _coco not convert the label. just use coco label
+    fusion_dir = f'{run_folder_dir}/fusion_cluster_v3' # save the fusion result to visulize some frames to a folder
+    fusion_label_dir = f'{run_folder_dir}/masked_fusion_label_coco_v3' # save the fusion result to a folder, _coco not convert the label. just use coco label
     os.makedirs(fusion_dir, exist_ok=True)
     os.makedirs(fusion_label_dir, exist_ok=True)
 
@@ -246,7 +246,7 @@ def test_clsuter_center(Run_num, sync_one_frame = False, selected_frame = None, 
                 print('\n')
                 if sync_one_frame:
                     ax = axs[(i-1)//2, (i-1)%2]
-                    ax.imshow(frame)
+                    # ax.imshow(frame)
                     ax.set_title(f'Camera {i} frame {image_number}')
                     plt.imsave(os.path.join(fusion_dir, f'Run_{Run_num}_Lidar_frame{bin_idx}_Camera{i}_frame_{image_number}.jpg'), frame)
                 if sync_all:
@@ -306,13 +306,14 @@ def test_clsuter_center(Run_num, sync_one_frame = False, selected_frame = None, 
         ## ========= code below is for result fusion ==========
     if sync_all:    
         write_out_fused_result(run_fused_result, fusion_label_dir, Run_num)
+        # write_out_fused_result(refined_fused_result, fusion_dir, Run_num)
         for i in cameras:
             out_writers[i].release()
         # print(f'Camera {i} frame {bin_idx} is processed successfully')
 
 if __name__ == '__main__':
     ### use mode 1: check for one frame in one Run ###
-    # test_clsuter_center(Run_num=48, sync_one_frame = True, selected_frame = 229)
+    # test_clsuter_center(Run_num=850, sync_one_frame = True, selected_frame = 340)
    
 
     ### use mode 2: check for one camera in one Run ###
@@ -320,18 +321,18 @@ if __name__ == '__main__':
     
 
     ### use mode 3: check for all selected cameras in one Run ###
-    # test_clsuter_center(Run_num=1003, sync_all= True)
+    test_clsuter_center(Run_num=48, sync_all= True)
 
     # use mode 4:function to get the fused result for all the runs ###
-    run_nums = [int(dir.split('_')[-1])for dir in os.listdir('../datasets/validation_data_full') if dir.startswith('Run_')]
-    error_run_nums = [] 
-    for run_num in tqdm(run_nums):
-        if run_num == 55:
-            continue
-        try:
-            test_clsuter_center(Run_num=run_num, sync_all= True)
-        except Exception as e:
-            error_run_nums.append(run_num)
-            print(f'Error: {e}')
-            continue
-    print('Error run numbers', error_run_nums)
+    # run_nums = [int(dir.split('_')[-1])for dir in os.listdir('../datasets/validation_data_full') if dir.startswith('Run_')]
+    # error_run_nums = [] 
+    # for run_num in tqdm(run_nums):
+    #     if run_num == 55:
+    #         continue
+    #     try:
+    #         test_clsuter_center(Run_num=run_num, sync_all= True)
+    #     except Exception as e:
+    #         error_run_nums.append(run_num)
+    #         print(f'Error: {e}')
+    #         continue
+    # print('Error run numbers', error_run_nums)

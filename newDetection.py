@@ -314,7 +314,7 @@ def run_detection(Run_num, cam_num, debug=False):
 
 
 if __name__ == '__main__':
-    run_detection(55, 2, debug=True)
+    run_detection(850, 4, debug=True)
     # run_nums= [int(dir.split('_')[1]) for dir in os.listdir('../datasets/validation_data_full') if dir.startswith('Run_')]
     # print(run_nums)
     # # print(a)

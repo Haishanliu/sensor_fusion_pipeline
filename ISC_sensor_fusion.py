@@ -17,6 +17,7 @@ import math
 
 import matplotlib.pyplot as plt
 import os
+from copy import deepcopy
 
 
 CLUSTER_LABELS = {i: object for i, object in enumerate(mmdet.evaluation.functional.coco_classes())}
@@ -82,10 +83,12 @@ def get_fused_detection(image, bin_path, model, T_velo_cam, T_cam_velo,K , D, dr
     undistorted_image = cv2.undistort(image, K, D)
     # step 2: project velo --> point_uvz, mainly use this function for syncronization verification
     velo_uvz = project_velobin2uvz(bin_path, T_velo_cam, undistorted_image, remove_plane=False)
+    draw_cloud_on_image(velo_uvz, image)
+    velo_uvz_associated = deepcopy(velo_uvz) # will modify the velo_uvz_associated in the associate_cam_to_lidar function
 
 
     # step 3: get the point_uvz centers for the detected objects
-    bboxes, scores, labels, clusters, centers = associate_cam_to_lidar(bboxes= bboxes, labels= labels, scores= scores, velo_uvz=velo_uvz, T_cam_velo= T_cam_velo)
+    bboxes, scores, labels, clusters, centers = associate_cam_to_lidar(bboxes= bboxes, labels= labels, scores= scores, velo_uvz=velo_uvz_associated, T_cam_velo= T_cam_velo)
 
     # draw boxes on image
     if draw_boxes:
@@ -128,38 +131,42 @@ def get_fused_detection_multi_methods(cap, image_num, bin_path, model, T_velo_ca
             centers - centers of the detected objects in LiDAR xyz coordinates
         '''
     ## 1. compute detections in the left image
-    detections = model(image, pred_score_thr=0.1, show=False, no_save_pred=True, return_vis=False)
-    for i, result in enumerate(detections['predictions']):
-        labels = np.array(result['labels'])
-        scores = np.array(result['scores'])
-        bboxes = np.array(result['bboxes']).astype(int) # min_x, min_y, max_x, max_y
+    detection_format = f'{dataset_dir}/Run_{Run_num}/ISC_Run_{Run_num}_ISC_all_timing.csv'
+    detections = pd.read_csv(detection_format, header = ["label", "score", "x1", "y1", "x2", "y2", "method"])
+    bboxes = detections[['x1', 'y1', 'x2', 'y2']].values
+    scores = scores['score'].values
+    labels = labels['label'].values
+    # for i, result in enumerate(detections['predictions']):
+    #     labels = np.array(result['labels'])
+    #     scores = np.array(result['scores'])
+    #     bboxes = np.array(result['bboxes']).astype(int) # min_x, min_y, max_x, max_y
 
-        # fileter out the labels that are not interested
-        mask = (scores >= 0.3) & (labels != 9) & (labels != 4)
-        labels, scores, bboxes = labels[mask], scores[mask], bboxes[mask]
+    #     # fileter out the labels that are not interested
+    #     mask = (scores >= 0.3) & (labels != 9) & (labels != 4)
+    #     labels, scores, bboxes = labels[mask], scores[mask], bboxes[mask]
         
-        # only keep the interested labels
-        mask2 = np.isin(labels, list(TAGRET_LABELS))
-        labels, scores, bboxes = labels[mask2], scores[mask2], bboxes[mask2]
+    #     # only keep the interested labels
+    #     mask2 = np.isin(labels, list(TAGRET_LABELS))
+    #     labels, scores, bboxes = labels[mask2], scores[mask2], bboxes[mask2]
 
-        # set confidence threshold for car to be >= 0.5, for person to be >= 0.3
-         # Define class-wise confidence thresholds
-        class_thresholds = {
-            0: 0.3,  # person
-            1: 0.3,  # bicycle
-            2: 0.5,  # car
-            3: 0.3,  # motorcycle
-            5: 0.5,  # bus
-            7: 0.5,  # truck
-            # Add other class labels and their thresholds as needed
-        }
+    #     # set confidence threshold for car to be >= 0.5, for person to be >= 0.3
+    #      # Define class-wise confidence thresholds
+    #     class_thresholds = {
+    #         0: 0.3,  # person
+    #         1: 0.3,  # bicycle
+    #         2: 0.5,  # car
+    #         3: 0.3,  # motorcycle
+    #         5: 0.5,  # bus
+    #         7: 0.5,  # truck
+    #         # Add other class labels and their thresholds as needed
+    #     }
         
-        # Create an array of thresholds corresponding to each detection
-        thresholds = np.array([class_thresholds[label] for label in labels])
+    #     # Create an array of thresholds corresponding to each detection
+    #     thresholds = np.array([class_thresholds[label] for label in labels])
 
-        # Create a mask where each detection meets its class-specific threshold
-        mask3 = scores >= thresholds
-        labels, scores, bboxes = labels[mask3], scores[mask3], bboxes[mask3]
+    #     # Create a mask where each detection meets its class-specific threshold
+    #     mask3 = scores >= thresholds
+    #     labels, scores, bboxes = labels[mask3], scores[mask3], bboxes[mask3]
 
 
     
@@ -427,19 +434,30 @@ def associate_cam_to_lidar(bboxes, labels, scores, velo_uvz, T_cam_velo):
         # print(f'inside_or_near: {inside_or_near}')
         points_inside = velo_uvz[inside_or_near] # Nx3 array of points that are within the bbox
         
+        velo_uvz = np.delete(velo_uvz, inside_or_near, axis=0)
+
+        # further calculate the distance between the points_inside and the velo_uvz, 
+        # if the distance is within the threshold, then add the points to the points_inside
+        # offset the sychronization error
+        points_inside_mean = np.mean(points_inside, axis=0)
+        distance = np.linalg.norm(velo_uvz - points_inside_mean, axis=1)
+        near = np.where(distance <= 0.3)[0]
+        points_near = np.vstack((points_inside, velo_uvz[near]))
+
+        
         # with the sorted bbox, we can remove the points that are within the bbox, this is to avoid the same points are assigned to multiple bboxes
         # withtout replacement, remove the points that are within the bbox
         # remove the points_inside from the velo_uvz
-        velo_uvz = np.delete(velo_uvz, inside_or_near, axis=0)
+        velo_uvz = np.delete(velo_uvz, near, axis=0)
         points_2d = velo_uvz[:, :2]
 
         # add the label to the points
-        cluster_label_col = np.ones((len(points_inside), 1)) * labels[i]
-        cluster_score_col = np.ones((len(points_inside), 1)) * scores[i]
-        points_inside = np.hstack((points_inside, cluster_label_col, cluster_score_col))
+        cluster_label_col = np.ones((len(points_near), 1)) * labels[i]
+        cluster_score_col = np.ones((len(points_near), 1)) * scores[i]
+        points_near = np.hstack((points_near, cluster_label_col, cluster_score_col))
         # clusters[i].extend(velo_uvz[inside_or_near])
         '''point_inside: Nx5 array of points that are within the bbox, [x, y, z, lable, score]the last column is the label'''
-        clusters[i].extend(points_inside)
+        clusters[i].extend(points_near)
     # velo_uvz may have some points that are not associated with any bbox:
     # reason: the points are too far away from the bbox
     # reason: false negative from the detr detection model, need to relied on the histroy information
@@ -624,7 +642,7 @@ def draw_cluster_on_image(velo_uvz, image, color_map=get_color):
     u, v, z, labels, scores = velo_uvz
     # draw LiDAR point cloud on blank image
     for i in range(len(u)):
-        cv2.circle(image, (int(u[i]), int(v[i])), 5, 
+        cv2.circle(image, (int(u[i]), int(v[i])), 7, 
                    color_map(labels[i]), -1); 
 
     # get the unique labels
@@ -633,6 +651,19 @@ def draw_cluster_on_image(velo_uvz, image, color_map=get_color):
     # print('unique labels', unique_labels)
     draw_legend(image, unique_labels, color_map)   
     return image
+
+def draw_cloud_on_image(velo_uvz, image, color_map=get_color):
+    print('ziyan velo_uvz', velo_uvz.shape)
+    # unpack LiDAR points
+    u, v, z = velo_uvz
+    # draw LiDAR point cloud on blank image
+    # draw retangle
+
+    for i in range(len(u)):
+        cv2.circle(image, (int(u[i]), int(v[i])), 4, 
+                   (255, 0, 255), -1); 
+
+   
 
 def concatenate_images(image_list, layout, target_size=(1920, 1080)):
     """
@@ -706,6 +737,7 @@ def write_out_fused_result(run_fused_result, fusion_label_dir, Run_num):
     '''Write out the fused result to a txt file'''
     '''bin_idx.pid, object_1, 
        bin_idx.pid, object_2,'''
+    
     with open(f'{fusion_label_dir}/Run_{Run_num}_fused_result.txt', 'w') as f:
         for bin_idx, proposals in run_fused_result.items():
             # when no proposals, skip
@@ -768,6 +800,8 @@ def camera_proposal_decision(camera_proposal):
      # Initialize a list to keep the suppressed detections
     
     suppressed_detections = []
+   
+
     # get the unique labels
     if len(proposals):
         unique_labels = np.unique(proposals[:, 3])
@@ -778,6 +812,21 @@ def camera_proposal_decision(camera_proposal):
                 suppressed_detections.extend(suppresed_class_proposals)
         # convert label 0, 1, 3 to '1' -- indicating the person
     suppressed_detections = np.array(suppressed_detections)
+
+    # # spuress the duplicate person and bicycle by conducting nms
+    if len(suppressed_detections) > 0:
+        labels = suppressed_detections[:, 3]
+        for i in range(len(suppressed_detections)):
+            for j in range(i+1, len(suppressed_detections)):
+                if (labels[i] == 0 and  labels[j] == 1) or (labels[i] == 1 and  labels[j] == 0):
+                    distance = np.linalg.norm(suppressed_detections[i, :3] - suppressed_detections[j, :3])
+                    if distance <= 0.3:
+                        # delete the one with label 1, let ziyan's model to handle the person and bicycle
+                        if labels[i] == 1:
+                            suppressed_detections = np.delete(suppressed_detections, i, axis=0)
+                        else:
+                            suppressed_detections = np.delete(suppressed_detections, j, axis=0)
+                       
     return np.array(suppressed_detections).reshape(-1, 6) # 2d array
 
 #================================================ 
@@ -820,7 +869,7 @@ def refine_conventional_pipeline_result(df,  bin_index, voted_camera_proposal):
     refined_results = [] # 'x', 'y', 'z', 'label','score','roration'
     conventional_result = get_one_bin_detection(df, f'{bin_index:06d}.pcd')
 
-    mask = voted_camera_proposal[:, 3] == 0 # person
+    mask = voted_camera_proposal[:, 3] in [0, 1, 3] # person
     voted_cam_vehicles = voted_camera_proposal[~mask]
     voted_cam_vrus = voted_camera_proposal[mask]
 
@@ -835,6 +884,7 @@ def refine_conventional_pipeline_result(df,  bin_index, voted_camera_proposal):
     if len(voted_cam_vehicles) > 0:
         refined_results.append(voted_cam_vehicles)
     else:
+        # during the night, the camera may not detect the vehicles, so we take the vehicles from the conventional pipeline
         refined_results.append(conventaion_vehicles_centers)
     
     # if take the vru detection from the conventional pipeline
@@ -856,8 +906,6 @@ def refine_conventional_pipeline_result(df,  bin_index, voted_camera_proposal):
     return refined_results
 
 # refine_conventional_pipeline_result(load_conventional_pipeline_result(Run_num=55), 24, 0)
-
-
 
 #=====================================================
 # test the synchronization between the camera and LiDAR data

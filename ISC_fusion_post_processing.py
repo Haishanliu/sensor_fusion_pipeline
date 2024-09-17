@@ -132,9 +132,9 @@ def find_subclass(timestamp_start, loc2d, loc3d, search_period, search_radius, n
         # find subclass in 3d
         for j in indices_2d_updated:
             # print(classes_2d[j])
-            # if classes_2d[j] == 'car' or classes_2d[j] == 'truck':
-            #     subclass = 'Passenger_Vehicle'
-            if classes_2d[j] == 'bicycle':
+            if classes_2d[j] == 'car' or classes_2d[j] == 'truck':
+                subclass = 'Passenger_Vehicle'
+            elif classes_2d[j] == 'bicycle':
                 subclass = 'VRU_Adult_Using_Manual_Bicycle'
             else:
                 within_range_indices_3d = calcualte_near_objects(centers_2d, centers_3d, j, indices_3d, search_radius)
@@ -148,7 +148,7 @@ def find_subclass(timestamp_start, loc2d, loc3d, search_period, search_radius, n
                     # print(frequency)
                     tmp = 0
                     # HS: 删掉 passanger vehicle
-                    while frequency.index[tmp] == 'VRU_Adult_Using_Manual_Bicycle':
+                    while frequency.index[tmp] == 'VRU_Adult_Using_Manual_Bicycle' or frequency.index[tmp] == 'Passenger_Vehicle':
                         tmp += 1
                     subclass = frequency.index[tmp]
                 else:
@@ -177,13 +177,66 @@ def find_subclass(timestamp_start, loc2d, loc3d, search_period, search_radius, n
             if for_tracking:
                 detection = [timestamp, subclass_final, center[0], size[0], center[1], size[1], center[2], size[2], raws[j], frames_2d[j]]
             elif for_eval:
-                
                 # be consistent with the GT format, bin_index, label, x, y, z, length, width, height, confidence score
                 detection = [str(frames_2d[j]).zfill(6)+'.pcd', subclass_final, center[0], size[0], center[1], size[1], center[2], size[2], raws[j], confidence_scores[j]]
             else:
                 detection = [timestamp, subclass_final, center[0], size[0], center[1], size[1], center[2], size[2], raws[j]]
             detections.append(detection)
     return detections
+
+# def trajectory_interpolation(df, first_frame, last_frame):
+def filtered_second_pass(output_file_name):
+    # reliable objects: objects that appear in more than 10 frames
+    # read in the flitered csv, then find the first frame of each reliable object, and then find the last frame of each relaible object
+    df = pd.read_csv(output_file_name)
+    df.columns = ['Timestamps', 'subclass', 'x_center', 'x_length', 'y_center', 'y_length', 'z_center', 'z_length', 'z_rotation']
+    print(df['subclass'].value_counts())
+    reliable_objects = df['subclass'].value_counts()[df['subclass'].value_counts() > 30].index
+    print(reliable_objects)
+    
+    # delete the objects that are not reliable
+    df = df[df['subclass'].isin(reliable_objects)]
+
+    # get the first frame of each reliable object
+    first_frames,last_frames = {}, {}
+    for obj in reliable_objects:
+        first_frame = df[df['subclass'] == obj]['Timestamps'].min()
+        first_frames[obj] = first_frame
+        last_frame = df[df['subclass'] == obj]['Timestamps'].max()
+        last_frames[obj] = last_frame
+    print(first_frames, last_frames)
+
+    # create a new dataframe with the first frame and last frame of each reliable object
+    object_trajectory_dict = {}
+    for obj in reliable_objects:
+        object_trajectory_dict[obj] = df[df['subclass'] == obj].reset_index(drop=True)
+    print(object_trajectory_dict)
+
+    filtered_df = pd.DataFrame(columns=df.columns)
+
+    for time_stamp in df['Timestamps'].unique():
+        original_objs = df[df['Timestamps'] == time_stamp]
+        for obj in reliable_objects:
+            # object should shows up in the frame
+            if time_stamp >= first_frames[obj] and time_stamp <= last_frames[obj]:
+                if obj in original_objs['subclass'].values:
+                    filtered_df = filtered_df.append(original_objs[original_objs['subclass'] == obj])
+                else:
+                    # 
+                    # interpolate the object trajectory
+                    # just use the previous frame of the object
+
+                    obj_trajectory = object_trajectory_dict[obj]
+                    nearest_frame = obj_trajectory.iloc[(obj_trajectory['Timestamps']-time_stamp).abs().argsort()[:1]]
+                    filtered_df = filtered_df.append(nearest_frame)
+    # get the directory of the output file
+    output_dir = os.path.dirname(output_file_name)
+    file_name = os.path.basename(output_file_name)
+    filtered_name = file_name.split('.')[0] + '_filtered.csv'
+    filtered_df.to_csv(os.path.join(output_dir, filtered_name), index=False)
+    # filtered_df.to_csv('/home/haishan/Projects/Intersection_safety/Intersection_Safety_Challenge/sensor_fusion_pipline/camera_fused_label/fused_label_lidar12_cam24/masked_fusion_label_coco_v3/Run_48_detections_fusion_lidar12_camera_search-based_filtered.csv', index=False)
+
+                
 
 def main(for_tracking=False, for_eval=False):
 
@@ -214,7 +267,7 @@ def main(for_tracking=False, for_eval=False):
     # Get a list of all items in the directory
     # loc = './sample_detections_validation/' #replace it to your own folder
     dataset_dir = '../datasets/validation_data_full'
-    res2d_dir = './camera_fused_label/fused_label_lidar12_cam24/masked_fusion_label_coco_v2'
+    res2d_dir = './camera_fused_label/fused_label_lidar12_cam24/masked_fusion_label_coco_v3'
 
     res3d_dir = '../Intersection-Safety-Challenge/conventional_pipeline/sample_detections_validation'
     run_res_2d_format = f'{res2d_dir}/Run_{{}}_fused_result.txt'
@@ -230,6 +283,7 @@ def main(for_tracking=False, for_eval=False):
     
     Run_nums = sorted([int(dir.split('_')[-1])for dir in os.listdir('../datasets/validation_data_full') if dir.startswith('Run_')])
     # Run_nums = [55]
+    Run_nums= [48]
     error_runs = []
     for run_num in Run_nums:
         #input
@@ -265,10 +319,15 @@ def main(for_tracking=False, for_eval=False):
         print(f'Run_{run_num} is saved successfully')
     print('Error runs:', error_runs)
     print('Total runs:', len(Run_nums))
+
+    filtered_second_pass(output_file_name)
      
 
 
 if __name__ == "__main__":
     # main(for_tracking=True)
-    main(for_eval = True) # set for_eval to True to generate the evaluation file
-    # main() # if nothing is set, this one is for ISC submission
+    # main(for_eval = True) # set for_eval to True to generate the evaluation file
+    main() # if nothing is set, this one is for ISC submission
+
+    # filtered_second_pass()
+        
